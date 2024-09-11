@@ -27,7 +27,7 @@ helm repo add eks https://aws.github.io/eks-charts
 
 helm repo update eks
 
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \ # --version 1.7.1 
   -n kube-system \
   --set clusterName=my-cluster \
   --set serviceAccount.create=false \
