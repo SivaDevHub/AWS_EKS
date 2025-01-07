@@ -1,0 +1,26 @@
+# elasticsearchHosts: "https://eks-vpc-master:9200"
+# elasticsearchCertificateSecret: eks-vpc-master-certs
+# elasticsearchCertificateAuthoritiesFile: ca.crt
+# elasticsearchCredentialSecret: eks-vpc-master-credentials
+# service:
+#     type: LoadBalancer 
+
+ingress:
+  enabled: true
+  className: "alb"
+  pathtype: ImplementationSpecific
+  annotations:
+      ingress.kubernetes.io/proxy-body-size: 50m
+      ingress.kubernetes.io/proxy-request-buffering: 'off'
+      ingress.kubernetes.io/ssl-redirect: 'true'
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: '443'
+      alb.ingress.kubernetes.io/backend-protocol: HTTP
+      alb.ingress.kubernetes.io/healthcheck-path: /login
+      alb.ingress.kubernetes.io/certificate-arn: 'arn:aws:acm:us-east-1:905418039620:certificate/e4f6520d-6dd2-4799-8d80-53055385d00b'
+      alb.ingress.kubernetes.io/tags: Environment=qa,Platform=kibana
+      external-dns.alpha.kubernetes.io/hostname: kibana.905418039620.realhandsonlabs.net
+  hosts: []
+  tls: []

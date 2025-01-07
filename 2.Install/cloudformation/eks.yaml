@@ -1,0 +1,906 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ES DevTools EKS Cluster - V
+Mappings:
+  Constants:
+    Stack:
+      Purpose: ''
+      EnableMainNG: true
+    EKS:
+      CatalogItem: eks-cluster
+      CatalogVersion: V1.29c
+      ControlVersion: '1.28'
+      UseAddOnKubeProxy: 'true'
+      UseAddOnCoreDNS: 'true'
+      UseAddOnEbsCSI: 'true'
+      UseAddOnEfsCSI: 'true'
+      UseAddOnVpcCNI: 'true'
+      UseAddOnS3MountCSI: 'false'
+      UseAddOnPodIdentity: 'true'
+      UseAddOnNewRelicOperator: 'false'
+      UseAddOnCSISnapshotController: 'true'
+      EncryptSecrets: 'false'
+      AuthMode: API_AND_CONFIG_MAP
+      CreateOIDCProvider: 'true'
+    EKS-NG:
+      CatalogItem: eks-nodegroup-asg
+      CatalogVersion: V4.1
+      ClusterVersion: '1.28'
+    NodeGroupMain:
+      NodeGroupName: Main
+      BaseAMI: latest-gold
+      EbsVolumeSize: '40'
+      BootstrapArguments: ''
+      KubeletArguments: ''
+      PercentOfOnDemandInstances: '50'
+      MinOnDemandInstances: 1
+      InstanceTypeP1: m6a.4xlarge
+      InstanceTypeP2: m6i.4xlarge
+      InstanceTypeP3: r6a.4xlarge
+      InstanceTypeP4: r6i.4xlarge
+      SSHAccessCIDR: 10.0.0.0/8
+      Zones: true:true:true:false
+    ALB:
+      Namespace: srk-system
+      ServiceAccount: aws-load-balancer-controller
+    ExtDNS:
+      Namespace: srk-system
+      ServiceAccount: external-dns
+Parameters:
+  Environment:
+    Description: Environment Type
+    Type: String
+    Default: Production
+    AllowedValues:
+      - Shared
+      - Development
+      - QA
+      - Integration
+      - Performance
+      - PreProduction
+      - Production
+      - PostProduction
+    ConstraintDescription: Must be a valid environment type.
+  EnvironmentExt:
+    Description: Environment Extension - if multiple environment of same type
+    Type: String
+    Default: ''
+  Platform:
+    Description: Platform Name
+    Default: infrastructure
+    Type: String
+  Project:
+    Description: Project Name
+    Default: codedevqa-eks
+    Type: String
+  Change:
+    Description: Change ID
+    Default: CHG000000
+    Type: String
+  Version:
+    Description: Version of the deployment
+    Default: dev
+    Type: String
+  EC2KeyName:
+    Description: SSH Key
+    Default: '-'
+    Type: String
+  NodeAutoScalingGroupMinSize:
+    Description: NodeAutoScalingGroupMinSize
+    Default: 1
+    Type: Number
+    MinValue: 0
+  NodeAutoScalingGroupMaxSize:
+    Description: NodeAutoScalingGroupMaxSize
+    Default: 5
+    Type: Number
+    MinValue: 1
+  VPCName:
+    Type: String
+    Description: VPC Name for dynamic VPC Resolution
+  SubnetsName:
+    Type: String
+    Description: Subnet Group Name for dynamic Resolution
+  AdminPrincipal1:
+    Type: String
+    Description: IAM Principal Allowed to assume Cluster Admin Role (1)
+    Default: ''
+  AdminPrincipal2:
+    Type: String
+    Description: IAM Principal Allowed to assume Cluster Admin Role (2)
+    Default: ''
+  AdminPrincipal3:
+    Type: String
+    Description: IAM Principal Allowed to assume Cluster Admin Role (3)
+    Default: ''
+  AdminPrincipal4:
+    Type: String
+    Description: IAM Principal Allowed to assume Cluster Admin Role (4)
+    Default: ''
+  AdminPrincipal5:
+    Type: String
+    Description: IAM Principal Allowed to assume Cluster Admin Role (5)
+    Default: ''
+  AdminPrincipal6:
+    Type: String
+    Description: IAM Principal Allowed to assume Cluster Admin Role (6)
+    Default: ''
+  EnableMainNG:
+    Type: String
+    Description: If true, create the nodegroup, if false, delete the nodegroup[
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  SSOAWSRoles:
+    Type: CommaDelimitedList
+    Description: List of AWS SSO Roles users may be members of
+    Default: ''
+  AdminUsers:
+    Type: CommaDelimitedList
+    Description: List of Admin users who can assume the ClusterAdmin role
+    Default: ''
+Conditions:
+  IsProd: !Equals
+    - !Ref 'Environment'
+    - Production
+  HaveAdminPrincipal1: !Not
+    - !Or
+      - !Equals
+        - !Ref 'AdminPrincipal1'
+        - ''
+      - !Equals
+        - !Ref 'AdminPrincipal1'
+        - '-'
+  HaveAdminPrincipal2: !Not
+    - !Or
+      - !Equals
+        - !Ref 'AdminPrincipal2'
+        - ''
+      - !Equals
+        - !Ref 'AdminPrincipal2'
+        - '-'
+  HaveAdminPrincipal3: !Not
+    - !Or
+      - !Equals
+        - !Ref 'AdminPrincipal3'
+        - ''
+      - !Equals
+        - !Ref 'AdminPrincipal3'
+        - '-'
+  HaveAdminPrincipal4: !Not
+    - !Or
+      - !Equals
+        - !Ref 'AdminPrincipal4'
+        - ''
+      - !Equals
+        - !Ref 'AdminPrincipal4'
+        - '-'
+  HaveAdminPrincipal5: !Not
+    - !Or
+      - !Equals
+        - !Ref 'AdminPrincipal5'
+        - ''
+      - !Equals
+        - !Ref 'AdminPrincipal5'
+        - '-'
+  HaveAdminPrincipal6: !Not
+    - !Or
+      - !Equals
+        - !Ref 'AdminPrincipal6'
+        - ''
+      - !Equals
+        - !Ref 'AdminPrincipal6'
+        - '-'
+  HaveAdminSSOUsers: !Not
+    - !Equals
+      - !Join
+        - ','
+        - !Ref 'AdminUsers'
+      - ''
+  HaveSSOAWSRoles: !Not
+    - !Equals
+      - !Join
+        - ','
+        - !Ref 'SSOAWSRoles'
+      - ''
+  HaveAdminUsers: !And
+    - !Condition 'HaveAdminSSOUsers'
+    - !Condition 'HaveSSOAWSRoles'
+  HaveAdminPrincipal: !Or
+    - !Condition 'HaveAdminPrincipal1'
+    - !Condition 'HaveAdminPrincipal2'
+    - !Condition 'HaveAdminPrincipal3'
+    - !Condition 'HaveAdminPrincipal4'
+    - !Condition 'HaveAdminPrincipal5'
+    - !Condition 'HaveAdminPrincipal6'
+  CreateAdminRole: !Or
+    - !Condition 'HaveAdminPrincipal'
+    - !Condition 'HaveAdminUsers'
+  CreateAccessPolicy: !Condition 'CreateAdminRole'
+  MainNGEnabled: !Equals
+    - !Ref 'EnableMainNG'
+    - 'true'
+Resources:
+  Cluster:
+    Type: AWS::ServiceCatalog::CloudFormationProvisionedProduct
+    Properties:
+      ProductName: !FindInMap
+        - Constants
+        - EKS
+        - CatalogItem
+      ProvisionedProductName: !Sub '${AWS::StackName}-EKSCluster'
+      ProvisioningArtifactName: !FindInMap
+        - Constants
+        - EKS
+        - CatalogVersion
+      ProvisioningParameters:
+        - Key: Platform
+          Value: !Ref 'Platform'
+        - Key: Project
+          Value: !Ref 'Project'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: EnvironmentExt
+          Value: !Ref 'EnvironmentExt'
+        - Key: Purpose
+          Value: !FindInMap
+            - Constants
+            - Stack
+            - Purpose
+        - Key: Change
+          Value: !Ref 'Change'
+        - Key: ClusterVersion
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - ControlVersion
+        - Key: EnableSSH
+          Value: auto
+        - Key: SSHAccessCIDR
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - SSHAccessCIDR
+        - Key: SubnetIds
+          Value: !Sub '{{resolve:ssm:/srk/vpc/${VPCName}/private/subnets/Private-${SubnetsName}}}'
+        - Key: VpcId
+          Value: !Sub '{{resolve:ssm:/srk/vpc/${VPCName}/id}}'
+        - Key: AuthMode
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - AuthMode
+        - Key: UseAddOnKubeProxy
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnKubeProxy
+        - Key: UseAddOnCoreDNS
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnCoreDNS
+        - Key: UseAddOnVpcCNI
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnVpcCNI
+        - Key: UseAddOnEbsCSI
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnEbsCSI
+        - Key: UseAddOnEfsCSI
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnEfsCSI
+        - Key: UseAddOnS3MountCSI
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnS3MountCSI
+        - Key: UseAddOnPodIdentity
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnPodIdentity
+        - Key: CreateOIDCProvider
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - CreateOIDCProvider
+        - Key: UseAddOnNewRelicOperator
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnNewRelicOperator
+        - Key: UseAddOnCSISnapshotController
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - UseAddOnCSISnapshotController
+        - Key: EncryptSecrets
+          Value: !FindInMap
+            - Constants
+            - EKS
+            - EncryptSecrets
+        - Key: PublicAccessCidrs
+          Value: '0.0.0.0/0'
+        - Key: PublicEndpoint
+          Value: 'true'
+        - Key: PrivateEndpoint
+          Value: 'true'
+        - Key: ActivateCSIPolicy
+          Value: 'true'
+      Tags:
+        - Key: Platform
+          Value: !Ref 'Platform'
+        - Key: Project
+          Value: !Ref 'Project'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: EnvironmentFull
+          Value: !Sub '${Environment}${EnvironmentExt}'
+        - Key: Change
+          Value: !Ref 'Change'
+        - Key: Version
+          Value: !Ref 'Version'
+  NodeGroupMain:
+    Condition: MainNGEnabled
+    Type: AWS::ServiceCatalog::CloudFormationProvisionedProduct
+    DependsOn: Cluster
+    Properties:
+      ProductName: !FindInMap
+        - Constants
+        - EKS-NG
+        - CatalogItem
+      ProvisionedProductName: !Sub '${AWS::StackName}-NodeGroupMain'
+      ProvisioningArtifactName: !FindInMap
+        - Constants
+        - EKS-NG
+        - CatalogVersion
+      ProvisioningParameters:
+        - Key: NodeGroupName
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - NodeGroupName
+        - Key: Platform
+          Value: !Ref 'Platform'
+        - Key: Project
+          Value: !Ref 'Project'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: EnvironmentExt
+          Value: !Ref 'EnvironmentExt'
+        - Key: Purpose
+          Value: !FindInMap
+            - Constants
+            - Stack
+            - Purpose
+        - Key: Change
+          Value: !Ref 'Change'
+        - Key: ClusterVersion
+          Value: !FindInMap
+            - Constants
+            - EKS-NG
+            - ClusterVersion
+        - Key: UseClusterInfra
+          Value: 'true'
+        - Key: EnableSSH
+          Value: auto
+        - Key: SSHAccessCIDR
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - SSHAccessCIDR
+        - Key: NodeAutoScalingGroupMinSize
+          Value: !Ref 'NodeAutoScalingGroupMinSize'
+        - Key: NodeAutoScalingGroupMaxSize
+          Value: !Ref 'NodeAutoScalingGroupMaxSize'
+        - Key: BaseAMI
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - BaseAMI
+        - Key: EbsVolumeSize
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - EbsVolumeSize
+        - Key: EC2KeyName
+          Value: !Ref 'EC2KeyName'
+        - Key: BootstrapArguments
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - BootstrapArguments
+        - Key: KubeletArguments
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - KubeletArguments
+        - Key: InstanceTypeP1
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - InstanceTypeP1
+        - Key: InstanceTypeP2
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - InstanceTypeP2
+        - Key: InstanceTypeP3
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - InstanceTypeP3
+        - Key: InstanceTypeP4
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - InstanceTypeP4
+        - Key: MinOnDemandInstances
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - MinOnDemandInstances
+        - Key: PercentOfOnDemandInstances
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - PercentOfOnDemandInstances
+        - Key: Zones
+          Value: !FindInMap
+            - Constants
+            - NodeGroupMain
+            - Zones
+        - Key: Label1
+          Value: workload=Default
+        - Key: Label2
+          Value: cluster=mfs
+      Tags:
+        - Key: Name
+          Value: !Sub
+            - ${AWS::StackName}-NodeGroup${Name}
+            - Name: !FindInMap
+                - Constants
+                - NodeGroupMain
+                - NodeGroupName
+        - Key: Platform
+          Value: !Ref 'Platform'
+        - Key: Project
+          Value: !Ref 'Project'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: EnvironmentFull
+          Value: !Sub '${Environment}${EnvironmentExt}'
+        - Key: Change
+          Value: !Ref 'Change'
+        - Key: Version
+          Value: !Ref 'Version'
+  ClusterAdminRole:
+    Type: AWS::IAM::Role
+    Condition: CreateAdminRole
+    Properties:
+      Path: !Sub '/${Platform}/${Project}/'
+      RoleName: !Sub
+        - ${Platform}-${Project}${TAG}-${Environment}${EnvironmentExt}-ClusterAdmin
+        - TAG: ''
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - !If
+            - HaveAdminUsers
+            - Effect: Allow
+              Action: sts:AssumeRole
+              Principal:
+                AWS: !Ref 'SSOAWSRoles'
+              Condition:
+                ForAnyValue:StringLike:
+                  aws:userID: !Ref 'AdminUsers'
+            - !Ref 'AWS::NoValue'
+          - !If
+            - HaveAdminPrincipal
+            - Effect: Allow
+              Action: sts:AssumeRole
+              Principal:
+                AWS:
+                  - !If
+                    - HaveAdminPrincipal1
+                    - !Ref 'AdminPrincipal1'
+                    - !Ref 'AWS::NoValue'
+                  - !If
+                    - HaveAdminPrincipal2
+                    - !Ref 'AdminPrincipal2'
+                    - !Ref 'AWS::NoValue'
+                  - !If
+                    - HaveAdminPrincipal3
+                    - !Ref 'AdminPrincipal3'
+                    - !Ref 'AWS::NoValue'
+                  - !If
+                    - HaveAdminPrincipal4
+                    - !Ref 'AdminPrincipal4'
+                    - !Ref 'AWS::NoValue'
+                  - !If
+                    - HaveAdminPrincipal5
+                    - !Ref 'AdminPrincipal5'
+                    - !Ref 'AWS::NoValue'
+                  - !If
+                    - HaveAdminPrincipal6
+                    - !Ref 'AdminPrincipal6'
+                    - !Ref 'AWS::NoValue'
+            - !Ref 'AWS::NoValue'
+  ClusterAdminAccess:
+    Condition: CreateAdminRole
+    Type: AWS::EKS::AccessEntry
+    Properties:
+      AccessPolicies:
+        - AccessScope:
+            Type: cluster
+          PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+      ClusterName: !GetAtt 'Cluster.Outputs.ClusterName'
+      KubernetesGroups:
+        - srk:cluster:admin
+      PrincipalArn: !GetAtt 'ClusterAdminRole.Arn'
+      Type: STANDARD
+      Username: 'iam-cluster-admin:'
+      Tags:
+        - Key: Platform
+          Value: !Ref 'Platform'
+        - Key: Project
+          Value: !Ref 'Project'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: EnvironmentFull
+          Value: !Sub '${Environment}${EnvironmentExt}'
+  NodeAccessPermission:
+    Type: AWS::EKS::AccessEntry
+    Properties:
+      ClusterName: !GetAtt 'Cluster.Outputs.ClusterName'
+      PrincipalArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${Platform}/${Project}/Nodes/${NodeGroupMain.Outputs.NodeInstanceRole}'
+      Type: EC2_LINUX
+      Tags:
+        - Key: Platform
+          Value: !Ref 'Platform'
+        - Key: Project
+          Value: !Ref 'Project'
+        - Key: Environment
+          Value: !Ref 'Environment'
+        - Key: EnvironmentFull
+          Value: !Sub '${Environment}${EnvironmentExt}'
+  AccessToClusterPolicy:
+    Condition: CreateAccessPolicy
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: AccessToClusterPolicy
+      PolicyDocument:
+        Statement:
+          - Action:
+              - eks:DescribeCluster
+            Effect: Allow
+            Resource: !GetAtt 'Cluster.Outputs.ClusterArn'
+      Roles:
+        - !If
+          - CreateAdminRole
+          - !Ref 'ClusterAdminRole'
+          - !Ref 'AWS::NoValue'
+  ALBIngressRole:
+    Condition: MainNGEnabled
+    Type: AWS::IAM::Role
+    Properties:
+      Path: !Sub '/${Platform}/${Project}/'
+      RoleName: !Sub
+        - ${Platform}-${Project}${TAG}-${Environment}${EnvironmentExt}-ALBIngressRole
+        - TAG: ''
+      AssumeRolePolicyDocument: !Sub
+        - |-
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Federated": "arn:aws:iam::${AWS::AccountId}:oidc-provider/${Issuer}"
+                },
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "${Issuer}:sub": "system:serviceaccount:${NAMESPACE}:${SERVICE_ACCOUNT}",
+                    "${Issuer}:aud": "sts.amazonaws.com"
+                  }
+                }
+              }
+            ]
+          }
+        - Issuer: !GetAtt 'Cluster.Outputs.OIDCIssuer'
+          NAMESPACE: !FindInMap
+            - Constants
+            - ALB
+            - Namespace
+          SERVICE_ACCOUNT: !FindInMap
+            - Constants
+            - ALB
+            - ServiceAccount
+  ALBIngressPolicy:
+    Condition: MainNGEnabled
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !GetAtt 'NodeGroupMain.Outputs.NodeInstanceRole'
+        - !Ref 'ALBIngressRole'
+      PolicyName: ALBIngressControllerPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:CreateServiceLinkedRole
+            Resource: '*'
+            Condition:
+              StringEquals:
+                iam:AWSServiceName: elasticloadbalancing.amazonaws.com
+          - Effect: Allow
+            Action:
+              - ec2:DescribeAccountAttributes
+              - ec2:DescribeAddresses
+              - ec2:DescribeAvailabilityZones
+              - ec2:DescribeInternetGateways
+              - ec2:DescribeVpcs
+              - ec2:DescribeVpcPeeringConnections
+              - ec2:DescribeSubnets
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeInstances
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeTags
+              - ec2:GetCoipPoolUsage
+              - ec2:DescribeCoipPools
+              - elasticloadbalancing:DescribeLoadBalancers
+              - elasticloadbalancing:DescribeLoadBalancerAttributes
+              - elasticloadbalancing:DescribeListeners
+              - elasticloadbalancing:DescribeListenerCertificates
+              - elasticloadbalancing:DescribeSSLPolicies
+              - elasticloadbalancing:DescribeRules
+              - elasticloadbalancing:DescribeTargetGroups
+              - elasticloadbalancing:DescribeTargetGroupAttributes
+              - elasticloadbalancing:DescribeTargetHealth
+              - elasticloadbalancing:DescribeTags
+              - elasticloadbalancing:DescribeTrustStores
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - cognito-idp:DescribeUserPoolClient
+              - acm:ListCertificates
+              - acm:DescribeCertificate
+              - iam:ListServerCertificates
+              - iam:GetServerCertificate
+              - waf-regional:GetWebACL
+              - waf-regional:GetWebACLForResource
+              - waf-regional:AssociateWebACL
+              - waf-regional:DisassociateWebACL
+              - wafv2:GetWebACL
+              - wafv2:GetWebACLForResource
+              - wafv2:AssociateWebACL
+              - wafv2:DisassociateWebACL
+              - shield:GetSubscriptionState
+              - shield:DescribeProtection
+              - shield:CreateProtection
+              - shield:DeleteProtection
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupIngress
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - ec2:CreateSecurityGroup
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - ec2:CreateTags
+              - ec2:DeleteTags
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              StringEquals:
+                ec2:CreateAction: CreateSecurityGroup
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - ec2:CreateTags
+              - ec2:DeleteTags
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'true'
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:DeleteSecurityGroup
+            Resource: '*'
+            Condition:
+              'Null':
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:CreateLoadBalancer
+              - elasticloadbalancing:CreateTargetGroup
+            Resource: '*'
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:CreateListener
+              - elasticloadbalancing:DeleteListener
+              - elasticloadbalancing:CreateRule
+              - elasticloadbalancing:DeleteRule
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+              - elasticloadbalancing:RemoveTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'true'
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+              - elasticloadbalancing:RemoveTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:ModifyLoadBalancerAttributes
+              - elasticloadbalancing:SetIpAddressType
+              - elasticloadbalancing:SetSecurityGroups
+              - elasticloadbalancing:SetSubnets
+              - elasticloadbalancing:DeleteLoadBalancer
+              - elasticloadbalancing:ModifyTargetGroup
+              - elasticloadbalancing:ModifyTargetGroupAttributes
+              - elasticloadbalancing:DeleteTargetGroup
+            Resource: '*'
+            Condition:
+              'Null':
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*
+            Condition:
+              StringEquals:
+                elasticloadbalancing:CreateAction:
+                  - CreateTargetGroup
+                  - CreateLoadBalancer
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:RegisterTargets
+              - elasticloadbalancing:DeregisterTargets
+            Resource: arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:SetWebAcl
+              - elasticloadbalancing:ModifyListener
+              - elasticloadbalancing:AddListenerCertificates
+              - elasticloadbalancing:RemoveListenerCertificates
+              - elasticloadbalancing:ModifyRule
+            Resource: '*'
+  ExtDNSRole:
+    Condition: MainNGEnabled
+    Type: AWS::IAM::Role
+    Properties:
+      Path: !Sub '/${Platform}/${Project}/'
+      RoleName: !Sub
+        - ${Platform}-${Project}${TAG}-${Environment}${EnvironmentExt}-ExtDNSRole
+        - TAG: ''
+      AssumeRolePolicyDocument: !Sub
+        - |-
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Federated": "arn:aws:iam::${AWS::AccountId}:oidc-provider/${Issuer}"
+                },
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "${Issuer}:sub": "system:serviceaccount:${NAMESPACE}:${SERVICE_ACCOUNT}",
+                    "${Issuer}:aud": "sts.amazonaws.com"
+                  }
+                }
+              }
+            ]
+          }
+        - Issuer: !GetAtt 'Cluster.Outputs.OIDCIssuer'
+          NAMESPACE: !FindInMap
+            - Constants
+            - ExtDNS
+            - Namespace
+          SERVICE_ACCOUNT: !FindInMap
+            - Constants
+            - ExtDNS
+            - ServiceAccount
+  ExtDNSPolicy:
+    Condition: MainNGEnabled
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref 'ExtDNSRole'
+      PolicyName: ExtDNSPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - route53:ChangeResourceRecordSets
+            Resource:
+              - arn:aws:route53:::hostedzone/*
+          - Effect: Allow
+            Action:
+              - route53:ListHostedZones
+              - route53:ListResourceRecordSets
+              - route53:ListTagsForResource
+            Resource:
+              - '*'
+Outputs:
+  ClusterAdminRole:
+    Condition: CreateAdminRole
+    Description: Cluster Admin Role
+    Value: !Ref 'ClusterAdminRole'
+  ClusterAdminRoleArn:
+    Condition: CreateAdminRole
+    Description: Cluster Admin Role ARN
+    Value: !GetAtt 'ClusterAdminRole.Arn'
+  ClusterArn:
+    Description: Cluster ARN
+    Value: !GetAtt 'Cluster.Outputs.ClusterArn'
+  ClusterEndpoint:
+    Description: Cluster Endpoint
+    Value: !GetAtt 'Cluster.Outputs.ClusterEndpoint'
+  ClusterName:
+    Description: Cluster Name
+    Value: !GetAtt 'Cluster.Outputs.ClusterName'
+  ClusterSecurityGroup:
+    Description: Cluster Security Group
+    Value: !GetAtt 'Cluster.Outputs.ClusterSecurityGroup'
+  NodeSecurityGroup:
+    Description: Node Security Group
+    Value: !GetAtt 'Cluster.Outputs.NodeSecurityGroup'
+  NodeInstanceRole:
+    Description: Node Instance IAM Role
+    Value: !GetAtt 'Cluster.Outputs.NodeInstanceRole'
+  MainNodeGroup:
+    Condition: MainNGEnabled
+    Description: Main Node Group ASG
+    Value: !GetAtt 'NodeGroupMain.Outputs.NodeGroupASG'
+  MainNodeGroupSG:
+    Condition: MainNGEnabled
+    Description: Main Node Group Security Group
+    Value: !GetAtt 'NodeGroupMain.Outputs.NodeSecurityGroup'
+  MainNodeGroupRole:
+    Condition: MainNGEnabled
+    Description: Main Node Group IAM Role
+    Value: !GetAtt 'NodeGroupMain.Outputs.NodeInstanceRole'
+  MainNodeGroupRoleArn:
+    Condition: MainNGEnabled
+    Description: Main Node Role ARN
+    Value: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${Platform}/${Project}/Nodes/${NodeGroupMain.Outputs.NodeInstanceRole}'

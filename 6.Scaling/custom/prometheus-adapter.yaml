@@ -1,0 +1,20 @@
+logLevel: 6
+prometheus:
+  url: http://prometheus-server
+  port: 80
+  path: ""
+
+rules:
+  default: true
+  custom:
+  - seriesQuery: '{__name__=~"^http_server_requests_seconds_.*"}'
+    resources:
+      overrides:
+        namespace:
+          resource: namespace
+        pod:
+          resource: pod
+    name:
+      matches: "^http_server_requests_seconds_count(.*)"
+      as: "http_server_requests_seconds_count_sum"
+    metricsQuery: sum(increase(<<.Series>>{<<.LabelMatchers>>,uri=~"/persons.*"}[5m])) by (<<.GroupBy>>)  #sum(<<.Series>>{<<.LabelMatchers>>,uri=~"/persons.*"}) by (<<.GroupBy>>)

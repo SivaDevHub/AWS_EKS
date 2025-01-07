@@ -12,4 +12,5 @@ tags = {
   Owner       = "EKS"
   Environment = "QA"
 }
+env_name = "dev"
 
